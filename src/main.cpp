@@ -160,7 +160,7 @@ vector<double> getXY(double s, double d, vector<double> maps_s, vector<double> m
 
 }
 
-// Determine whether possible to lane change right or left
+// Determine whether possible to lane change left or right
 bool laneChange(double s_car, int lane_car, vector<vector<double>> sensor_fusion, bool left)
 {
   bool result = true;
@@ -178,7 +178,7 @@ bool laneChange(double s_car, int lane_car, vector<vector<double>> sensor_fusion
   for(int i =0; i<sensor_fusion.size(); i++)
   {
     float d = sensor_fusion[i][6];
-    if(d < (2+4*lane_move+2) && d > (2+4*lane_move-2))
+    if(d < (2+4*lane_move+2.5) && d > (2+4*lane_move-2.5))
     {
       double vx = sensor_fusion[i][3];
       double vy = sensor_fusion[i][4];		    
@@ -285,7 +285,6 @@ int main() {
 		// car reference position 
 		double pos_x = car_x;
           	double pos_y = car_y;
-		double pos_s;
           	double angle = deg2rad(car_yaw);
 
           	int prev_size = previous_path_x.size();		
@@ -294,26 +293,22 @@ int main() {
                 vector<double> ptsx;
 		vector<double> ptsy;
 
-		// list of waypoints for spline in s,d cs
-		vector<double> ptss;
-		vector<double> ptsd;
-
 		// mininum required safe distance between vehicles on highway
 		int dist_min = 30; //m
 
 		if(prev_size > 0)
 		{
 		  car_s = end_path_s;
-		  //std::cout << end_path_s << std::endl;
 		}
 
+	        // flag to indicate whether too close to the front car
 		bool too_close = false;
 
 		//  
 		for(int i =0; i<sensor_fusion.size(); i++)
 		{
 		  float d = sensor_fusion[i][6];
-		  if(d < (2+4*lane+2) && d > (2+4*lane-2))
+		  if(d < (2+4*lane+2.5) && d > (2+4*lane-2.5))
 		  {
 		    double vx = sensor_fusion[i][3];
     		    double vy = sensor_fusion[i][4];		    
@@ -352,7 +347,6 @@ int main() {
           	if(prev_size < 2)
           	{
               	  // 
-
 		  double prev_pos_x = car_x - cos(car_yaw);
     		  double prev_pos_y = car_y - sin(car_yaw);
 
@@ -361,18 +355,6 @@ int main() {
 
 		  ptsy.push_back(prev_pos_y);
 		  ptsy.push_back(car_y);
-
-		  
-		  //double prev_car_s = car_s - ref_vel*0.02/2.24;
-		  //double prev_car_d = car_d;
-		  vector<double> prev_pos_sd = getFrenet(prev_pos_x, prev_pos_y, angle, map_waypoints_x, map_waypoints_y);
-
-		  ptss.push_back(prev_pos_sd[0]);
-   		  ptsd.push_back(prev_pos_sd[1]);
-
-		  ptss.push_back(car_s);
-   		  ptsd.push_back(car_d);
-		  pos_s = car_s;
           	}
           	else
           	{
@@ -388,19 +370,6 @@ int main() {
 
 		  ptsy.push_back(prev_pos_y);
 		  ptsy.push_back(pos_y);
-
-		  vector<double> prev_pos_sd = getFrenet(prev_pos_x, prev_pos_y, angle, map_waypoints_x, map_waypoints_y);
-		  vector<double> pos_sd = getFrenet(pos_x, pos_y, angle, map_waypoints_x, map_waypoints_y);
-		  
-		  ptss.push_back(prev_pos_sd[0]);
-   		  ptsd.push_back(prev_pos_sd[1]);
-
-		  ptss.push_back(pos_sd[0]);
-   		  ptsd.push_back(pos_sd[1]);
-		  pos_s = pos_sd[0];
-
-		  //std::cout << prev_pos_sd[0] << std::endl;
-		  //std::cout << pos_sd[0] << std::endl;
           	}
 
 		
@@ -415,16 +384,6 @@ int main() {
 		ptsy.push_back(next_wp0[1]);
 		ptsy.push_back(next_wp1[1]);
 		ptsy.push_back(next_wp2[1]);
-	
-
-		ptss.push_back(car_s+dist_min);
-		ptsd.push_back(2+4*lane);
-
-		ptss.push_back(car_s+dist_min*2);
-		ptsd.push_back(2+4*lane);
-
-		ptss.push_back(car_s+dist_min*3);
-		ptsd.push_back(2+4*lane);
 
 		for(int i = 0; i < ptsx.size(); i++)
 		{
@@ -436,16 +395,9 @@ int main() {
    		  ptsy[i] = (shift_x*sin(0-angle)+shift_y*cos(0-angle));
 		}
 
-		for(int i = 0; i < ptss.size(); i++)
-		{
-		  //ptss[i] -= pos_s;
-	 	  //std::cout << ptss[i] << std::endl;
-		}
-
 		// create a spline
    		tk::spline s;
 		s.set_points(ptsx,ptsy);
-		//s.set_points(ptss,ptsd);
 
 		// carry over previous path waypoints from previous_path_x and previous_path_y		
           	for(int i = 0; i < prev_size; i++)
@@ -462,7 +414,7 @@ int main() {
 
     		for(int i = 0; i < 50 - previous_path_x.size(); i++)
     		{
-                  		
+                  //		
                   double N = (target_dist/(0.02*ref_vel/2.24));
 		  double x_point = x_add_on + target_x/N;
 		  double y_point = s(x_point);
@@ -476,13 +428,6 @@ int main() {
 		  y_point = (x_ref*sin(angle)+y_ref*cos(angle));
 		  x_point += pos_x;
 		  y_point += pos_y;
-
-		  /*
-		  double s_point = (pos_s+i*ref_vel*0.02/2.24);
-		  double d_point = s(s_point);
-   		  vector<double> xy = getXY((s_point), d_point, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-		  double x_point = xy[0];
-		  double y_point = xy[1];*/
 
           	  next_x_vals.push_back(x_point);
           	  next_y_vals.push_back(y_point);
