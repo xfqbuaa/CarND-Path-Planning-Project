@@ -12,6 +12,27 @@
 
 using namespace std;
 
+
+// constants
+// high way lane id
+vector<int> LANE = {0,1,2}; 
+// factors for cost functions
+int WEIGHT_EFFICIENCY = 1;
+int WEIGHT_SAFETY = 100;
+
+// mininum required safe distance between vehicles on highway
+int DIST_REF_FRONT = 30;
+int DIST_REF_REAR = 10;
+// prediction waypoints number
+int PATH_LENGTH = 50;
+// lane width
+int LANE_WIDTH = 4;
+// target speed
+float TARGET_SPEED = 49.5; //mph
+// delta velocity
+float DELTA_VEL = 0.3; //m/s
+
+
 // for convenience
 using json = nlohmann::json;
 
@@ -157,44 +178,116 @@ vector<double> getXY(double s, double d, vector<double> maps_s, vector<double> m
 	double y = seg_y + d*sin(perp_heading);
 
 	return {x,y};
-
 }
 
-// Determine whether possible to lane change left or right
-bool laneChange(double s_car, int lane_car, vector<vector<double>> sensor_fusion, bool left)
+// functions 
+// calculate minimum distance to the cloest front/rear car
+// front: if calcuate the gap between front car, front is true. otherwise front is false.
+float getMinGap(double s, int l, vector<vector<double>> sf, bool front)
 {
-  bool result = true;
-  float advance_limit = s_car + 30;
-  float behind_limit = s_car -10;
-  int lane_move = lane_car;
-  if(left) 
+  float minGap = 999;
+  for(int i =0; i<sf.size(); i++)
   {
-    lane_move -= 1;
-  }else
-  {
-    lane_move += 1; 
-  }
-
-  for(int i =0; i<sensor_fusion.size(); i++)
-  {
-    float d = sensor_fusion[i][6];
-    if(d < (2+4*lane_move+2.5) && d > (2+4*lane_move-2.5))
+    float d = sf[i][6];
+    if(d < (LANE_WIDTH*(0.5+l+0.7)) && d > (LANE_WIDTH*(0.5+l-0.7)))
     {
-      double vx = sensor_fusion[i][3];
-      double vy = sensor_fusion[i][4];		    
+      double vx = sf[i][3];
+      double vy = sf[i][4];		    
       double check_speed = sqrt(vx*vx+vy*vy);
-      double check_car_s = sensor_fusion[i][5];
-
-      check_car_s += (50*0.02*check_speed);
-
-      if(check_car_s > behind_limit && check_car_s < advance_limit)
+      double check_car_s = sf[i][5];
+      // predictions with constant speed and no lane change
+      check_car_s += (PATH_LENGTH*0.02*check_speed);
+      double gap = check_car_s - s;
+      if(front) 
       {
-        result = false;
+        if(check_car_s >= s && gap <= minGap)
+	{
+ 	  minGap = gap;
+	}
+      }else 
+      {
+        if(check_car_s < s && abs(gap) <= minGap)
+	{
+          minGap = abs(gap);
+	}
       }
     }
   }
-  return result;
+
+  return minGap;   
 }
+
+// efficient cost 
+// factor=1.0
+float s_diff_Cost(float ds)
+{
+  float cost =0;
+
+  if(ds <= DIST_REF_FRONT)
+  {
+    cost = 1;
+  }else if(ds > 3*DIST_REF_FRONT)
+  {
+    cost = 0;
+  }else
+  {
+    cost = (3*DIST_REF_FRONT - ds)/(2*DIST_REF_FRONT);
+  }
+
+  return cost;
+}
+
+// safety cost
+// factor=100
+float collisionCost(float ds, bool front)
+{
+  float cost = 0;
+  int refd = DIST_REF_REAR;
+  if(front)
+  {
+    refd = DIST_REF_FRONT;
+  }
+
+  if(ds >= refd)
+  {
+    cost = 0;
+  }else if(ds < 0.4*refd)
+  {
+    cost = 2;
+  }else if(ds <= refd*0.8 && ds >= 0.4*refd)
+  {
+    cost = 1;
+  }else
+  {
+    cost = (refd-ds)/(0.2*refd);
+    //std::cout << "ds" << ds << "  " << cost <<std::endl;
+  }
+  return cost;
+}
+
+// calcuate cost of possible behaviors
+// s: car end path s
+// l: car lane 
+// sf: car sensor fusion
+// change: change lane or not, if keep lane change is false.
+float calculateCost(double s, int l, vector<vector<double>> sf, bool change) 
+{
+  float cost = 0;
+
+  float gap_front = getMinGap(s, l, sf, true);
+  float gap_rear = getMinGap(s, l, sf, false);
+
+  cost += s_diff_Cost(gap_front)*WEIGHT_EFFICIENCY;
+  cost += collisionCost(gap_front, true)*WEIGHT_SAFETY; // front
+  
+  if(change)
+  {
+    cost += collisionCost(gap_rear, false)*WEIGHT_SAFETY; // rear
+  }
+
+  return cost;
+}
+
 
 int main() {
   uWS::Hub h;
@@ -207,9 +300,11 @@ int main() {
   vector<double> map_waypoints_dy;
 
   // Waypoint map to read from
-  string map_file_ = "../data/highway_map.csv";
+  //string map_file_ = "../data/highway_map.csv";
+  string map_file_ = "../data/highway_map_bosch1.csv";
   // The max s value before wrapping around the track back to 0
-  double max_s = 6945.554;
+  //double max_s = 6945.554;
+  double max_s = 5104.621;
   ifstream in_map_(map_file_.c_str(), ifstream::in);
 
   string line;
@@ -235,9 +330,11 @@ int main() {
   // start in lane 1;
   int lane = 1;
   // vehicle initial speed
-  double ref_vel = 0; //mph
+  double vel = 0; //mph
+  // int cycle number
+  int i_cycle = 0;
 
-  h.onMessage([&ref_vel,&lane,&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&vel,&lane,&i_cycle,&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -281,7 +378,6 @@ int main() {
 
 
           	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
-
 		// car reference position 
 		double pos_x = car_x;
           	double pos_y = car_y;
@@ -293,22 +389,35 @@ int main() {
                 vector<double> ptsx;
 		vector<double> ptsy;
 
-		// mininum required safe distance between vehicles on highway
-		int dist_min = 30; //m
-
+                // use ego vehicle prediction end_path_s to compare with close cars 
 		if(prev_size > 0)
 		{
 		  car_s = end_path_s;
 		}
+	
+		// flag to KL
+		bool KL = true;
+		// flag to LCL
+		bool LCL = false;
+		// flag to LCR
+		bool LCR = false;
+	        // cost variables for possible behaviors
+		float cost_KL = 999;
+                float cost_LCL = 999;
+                float cost_LCR = 999;
+		float cost_LCLL = 999;
+		float cost_LCRR = 999;
+		// flag to increase speed or not
+  		bool flag_reduce_vel = false;
+  		// flag to increase acceleration or not
+		bool flag_increase_acc = false;
+                bool flag_reduce_acc = false;
 
-	        // flag to indicate whether too close to the front car
-		bool too_close = false;
-
-		//  
+		// detect front car  
 		for(int i =0; i<sensor_fusion.size(); i++)
 		{
 		  float d = sensor_fusion[i][6];
-		  if(d < (2+4*lane+2.5) && d > (2+4*lane-2.5))
+		  if(d < (LANE_WIDTH*(0.5+lane+0.7)) && d > (LANE_WIDTH*(0.5+lane-0.7)))
 		  {
 		    double vx = sensor_fusion[i][3];
     		    double vy = sensor_fusion[i][4];		    
@@ -317,36 +426,124 @@ int main() {
 
    		    check_car_s += ((double)prev_size*0.02*check_speed);
 
-		    if((check_car_s > car_s) &&((check_car_s-car_s) < dist_min))
+		    if((check_car_s > car_s) &&((check_car_s-car_s) <= DIST_REF_FRONT))
 		    {
-                      if(laneChange(car_s, lane, sensor_fusion, true) && lane > 0)
+		      // behavior_planner model to determine
+		      // LCL / LCR / KL
+  		      // +/- velocity
+                      // +/- acceleration
+		      // calcuate cost of possible behaviors according to current lane
+		      if(lane == 0)
 		      {
-			lane -= 1;
-		      }else if(laneChange(car_s,lane, sensor_fusion, false) && lane < 2)
+                        cost_LCL = 999;
+			cost_KL = calculateCost(car_s, lane, sensor_fusion, false);
+			cost_LCR = calculateCost(car_s, (lane+1), sensor_fusion, true);
+			cost_LCRR = calculateCost(car_s, (lane+2), sensor_fusion, true);
+		      }else if(lane == 1)
 		      {
-  			lane += 1;
- 		      }
-		      else
+		        cost_LCL = calculateCost(car_s, (lane-1), sensor_fusion, true);
+		        cost_KL  = calculateCost(car_s, lane, sensor_fusion, false);
+		        cost_LCR = calculateCost(car_s, (lane+1), sensor_fusion, true);
+		      }else if(lane == 2)
 		      {
-		      too_close = true;
+			cost_LCL = calculateCost(car_s, (lane-2), sensor_fusion, true);
+			cost_LCL = calculateCost(car_s, (lane-1), sensor_fusion, true);
+		        cost_KL  = calculateCost(car_s, lane, sensor_fusion, false);
+		        cost_LCR = 999;
+		      }
+		      
+		      if(cost_LCLL < cost_LCL && cost_LCL < WEIGHT_SAFETY)
+  		      {
+ 			cost_LCL = cost_LCLL;
+                      }
+
+	 	      if(cost_LCRR < cost_LCR && cost_LCR < WEIGHT_SAFETY)
+  		      {
+ 			cost_LCR = cost_LCRR;
+                      }
+
+		      // determine best behavior according to the min cost
+                      if(cost_KL <= cost_LCL && cost_KL <= cost_LCR)
+		      {
+			KL = true;
+			LCL = false;
+			LCR = false;
+			flag_reduce_vel = true;
+                        if(cost_KL >2*WEIGHT_SAFETY)
+                        {
+                          flag_reduce_acc = true;
+                        }
+		      }else if(cost_LCL <= cost_KL && cost_LCL <= cost_LCR && cost_LCL < WEIGHT_SAFETY) 
+		      {
+		        KL = false;
+  			LCL  = true;
+			LCR  = false;
+                        if(vel < TARGET_SPEED*0.8)
+  	 		{
+			  flag_increase_acc = true;
+			}
+			if(cost_LCL >2*WEIGHT_SAFETY)
+                        {
+                          flag_reduce_acc = true;
+                        }
+ 		      }else if(cost_LCR <= cost_KL && cost_LCR <= cost_LCL && cost_LCR < WEIGHT_SAFETY)
+		      {
+			KL = false;
+  			LCL  = false;
+		        LCR = true;
+			if(vel < TARGET_SPEED*0.8)
+  	 		{
+			  flag_increase_acc = true;
+			}
+                        if(cost_LCR >2*WEIGHT_SAFETY)
+                        {
+                          flag_reduce_acc = true;
+                        }
 		      }
 		    }
 		  }
 		}
-
-		if(too_close)
+		
+		// KL or LCL or LCR
+		if(LCL && (i_cycle % 4 == 0))
 		{
-	 	  ref_vel -= .224;
-		}
-		else if(ref_vel < 49.5)
+		  lane -=1;
+		  std::cout << "lane change left: cost of LCL, KL, LCR:" << cost_LCL << "  "<< cost_KL << "  " << cost_LCR << std::endl;
+		}else if(LCR && (i_cycle % 4 == 0))
 		{
-		  ref_vel += .224;
+		  lane +=1;
+		  std::cout << "lane change right: cost of LCL, KL, LCR:" << cost_LCL << "  "<< cost_KL << "  " << cost_LCR << std::endl;
+		}//else if(KL)
+		//{
+	  	  //flag_reduce_vel = true;
+		  //std::cout << "keep lane: cost of LCL, KL, LCR:" << cost_LCL << "  "<< cost_KL << "  " << cost_LCR << std::endl;
+		//}
+
+		// increase velocity or decrease velocity
+		if(flag_reduce_vel)
+		{
+	 	  vel -= DELTA_VEL;
+		}
+		else if(vel < TARGET_SPEED)
+		{
+		  vel += DELTA_VEL;
 		}
 
-		// processing with previous path 
+		// increase a or decrease a
+		if(flag_increase_acc or vel < 0.5*TARGET_SPEED)
+                {
+                  vel += DELTA_VEL;
+                }		
+		if(flag_reduce_acc)
+                {
+                  vel -= DELTA_VEL*2;
+                }
+                i_cycle += 1;
+                
+		// trajectory generation model 
           	if(prev_size < 2)
           	{
-              	  // 
+              	  // determine previous point according to car_yaw
 		  double prev_pos_x = car_x - cos(car_yaw);
     		  double prev_pos_y = car_y - sin(car_yaw);
 
@@ -373,9 +570,9 @@ int main() {
           	}
 
 		
-		vector<double> next_wp0 = getXY(car_s+1*dist_min, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
-		vector<double> next_wp1 = getXY(car_s+2*dist_min, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
-		vector<double> next_wp2 = getXY(car_s+3*dist_min, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+		vector<double> next_wp0 = getXY(car_s+1*DIST_REF_FRONT, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+		vector<double> next_wp1 = getXY(car_s+2*DIST_REF_FRONT, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+		vector<double> next_wp2 = getXY(car_s+3*DIST_REF_FRONT, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
 
  		ptsx.push_back(next_wp0[0]);
 		ptsx.push_back(next_wp1[0]);
@@ -415,7 +612,7 @@ int main() {
     		for(int i = 0; i < 50 - previous_path_x.size(); i++)
     		{
                   //		
-                  double N = (target_dist/(0.02*ref_vel/2.24));
+                  double N = (target_dist/(0.02*vel/2.24));
 		  double x_point = x_add_on + target_x/N;
 		  double y_point = s(x_point);
 
