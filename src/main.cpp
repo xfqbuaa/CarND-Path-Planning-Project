@@ -8,22 +8,24 @@
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
-#include "spline.h"
+#include "spline.h" // import spline liabrary. 
 
 using namespace std;
 
 
 // constants
-// high way lane id
-vector<int> LANE = {0,1,2}; 
+// high way lane id [0,1,2]; 
 // factors for cost functions
 int WEIGHT_EFFICIENCY = 1;
 int WEIGHT_SAFETY = 100;
 
+// factors for collison cost calculation front and rear
+float FACTOR_REF_FRONT = 1.0;
+float FACTOR_REF_REAR = 0.6;
 // mininum required safe distance between vehicles on highway
-int DIST_REF_FRONT = 15;
-int DIST_REF_REAR = 5;
 int DIST_REF = 30;
+int DIST_REF_FRONT = 15;
+int DIST_REF_REAR = 10;
 // prediction waypoints number
 int PATH_LENGTH = 50;
 // lane width
@@ -32,6 +34,7 @@ int LANE_WIDTH = 4;
 float TARGET_SPEED = 49.5; //mph
 // delta velocity
 float DELTA_VEL = 0.33; //m/s
+float LANE_MARGIN = 0.6; 
 
 
 // for convenience
@@ -182,15 +185,16 @@ vector<double> getXY(double s, double d, vector<double> maps_s, vector<double> m
 }
 
 // functions 
-// calculate minimum distance to the cloest front/rear car
+// calculate minimum relative distance to the cloest front/rear car
 // front: if calcuate the gap between front car, front is true. otherwise front is false.
 float getMinGap(double s, int l, vector<vector<double>> sf, bool front)
 {
   float minGap = 999;
+  float minVel = 99;
   for(int i =0; i<sf.size(); i++)
   {
     float d = sf[i][6];
-    if(d < (LANE_WIDTH*(0.5+l+0.6)) && d > (LANE_WIDTH*(0.5+l-0.6)))
+    if(d < (LANE_WIDTH*(0.5+l+LANE_MARGIN)) && d > (LANE_WIDTH*(0.5+l-LANE_MARGIN)))
     {
       double vx = sf[i][3];
       double vy = sf[i][4];		    
@@ -204,37 +208,46 @@ float getMinGap(double s, int l, vector<vector<double>> sf, bool front)
         if(check_car_s >= s && gap <= minGap)
 	{
  	  minGap = gap;
+          minVel = check_speed;
 	}
       }else 
       {
         if(check_car_s < s && abs(gap) <= minGap)
 	{
           minGap = abs(gap);
+          minVel = check_speed;
 	}
       }
     }
   }
-
-  return minGap;   
+  //if(minVel == 999)
+  //{
+    //minVel = 9;
+  //}
+  return minGap/(50*0.02*minVel);   //  realative to 1s check car displacement
+  //return minGap;
 }
 
 // efficient cost 
 // factor=1.0
 float s_diff_Cost(float ds)
 {
+  
   float cost =0;
+  //float refd = DIST_REF_FRONT;
+  float refd = FACTOR_REF_FRONT;
 
-  if(ds <= DIST_REF_FRONT)
+  if(ds <= 1*refd) 
   {
     cost = 1;
-  }else if(ds > 4*DIST_REF_FRONT)
+  }else if(ds > 3*refd)
   {
     cost = 0;
   }else
   {
-    cost = (4*DIST_REF_FRONT - ds)/(3*DIST_REF_FRONT);
+    cost = (3*refd - ds)/(2*refd);
   }
-
+  //std::cout << "ds" << ds << "  " << cost <<std::endl;
   return cost;
 }
 
@@ -243,15 +256,16 @@ float s_diff_Cost(float ds)
 float collisionCostFront(float ds)
 {
   float cost = 0;
-  int refd = DIST_REF_FRONT;
+  //float refd = DIST_REF_FRONT;
+  float refd = FACTOR_REF_FRONT;
 
   if(ds >= refd)
   {
     cost = 0;
-  }else if(ds < 0.4*refd)
+  }else if(ds <= 0.5*refd)
   {
     cost = 2;
-  }else if(ds <= refd*0.7 && ds >= 0.4*refd)
+  }else if(ds < refd*0.7 && ds >= 0.5*refd)
   {
     cost = 1;
   }else
@@ -267,20 +281,18 @@ float collisionCostFront(float ds)
 float collisionCostRear(float ds)
 {
   float cost = 0;
-  int refd = DIST_REF_REAR;
+  //float refd = DIST_REF_REAR;
+  float refd = FACTOR_REF_REAR;
 
   if(ds >= refd)
   {
     cost = 0;
-  }else if(ds < 0.4*refd)
-  {
-    cost = 2;
-  }else if(ds <= refd*0.7 && ds >= 0.4*refd)
+  }else if(ds < 0.5*refd)
   {
     cost = 1;
   }else
   {
-    cost = (refd-ds)/(0.3*refd);
+    cost = (refd-ds)/(0.5*refd);
     //std::cout << "ds" << ds << "  " << cost <<std::endl;
   }
   return cost;
@@ -296,13 +308,13 @@ float calculateCost(double s, int l, vector<vector<double>> sf, bool change)
   float cost = 0;
 
   float gap_front = getMinGap(s, l, sf, true);
-  float gap_rear = getMinGap(s, l, sf, false);
-
+  
   cost += s_diff_Cost(gap_front)*WEIGHT_EFFICIENCY;
   cost += collisionCostFront(gap_front)*WEIGHT_SAFETY; // front
   
   if(change)
   {
+    float gap_rear = getMinGap(s, l, sf, false);
     cost += collisionCostRear(gap_rear)*WEIGHT_SAFETY; // rear
   }
 
@@ -438,7 +450,7 @@ int main() {
 		for(int i =0; i<sensor_fusion.size(); i++)
 		{
 		  float d = sensor_fusion[i][6];
-		  if(d < (LANE_WIDTH*(0.5+lane+0.6)) && d > (LANE_WIDTH*(0.5+lane-0.6)))
+		  if(d < (LANE_WIDTH*(0.5+lane+LANE_MARGIN)) && d > (LANE_WIDTH*(0.5+lane-LANE_MARGIN)))
 		  {
 		    double vx = sensor_fusion[i][3];
     		    double vy = sensor_fusion[i][4];		    
@@ -473,12 +485,12 @@ int main() {
 		        cost_LCR = 999;
 		      }
 		      
-		      if(cost_LCLL < cost_LCL && cost_LCL < WEIGHT_SAFETY)
+		      if(cost_LCLL < cost_LCL && cost_LCL < .3*WEIGHT_SAFETY)
   		      {
  			cost_LCL = cost_LCLL;
                       }
 
-	 	      if(cost_LCRR < cost_LCR && cost_LCR < WEIGHT_SAFETY)
+	 	      if(cost_LCRR < cost_LCR && cost_LCR < .3*WEIGHT_SAFETY)
   		      {
  			cost_LCR = cost_LCRR;
                       }
@@ -490,7 +502,7 @@ int main() {
 			LCL = false;
 			LCR = false;
 			flag_reduce_vel = true;
-                        if(cost_KL >2*WEIGHT_SAFETY)
+                        if(cost_KL >1.5*WEIGHT_SAFETY)
                         {
                           flag_reduce_acc = true;
                         }
@@ -503,7 +515,7 @@ int main() {
   	 		{
 			  flag_increase_acc = true;
 			}
-			if(cost_LCL >2*WEIGHT_SAFETY)
+			if(cost_LCL >1.5*WEIGHT_SAFETY)
                         {
                           flag_reduce_acc = true;
                         }
@@ -516,7 +528,7 @@ int main() {
   	 		{
 			  flag_increase_acc = true;
 			}
-                        if(cost_LCR >2*WEIGHT_SAFETY)
+                        if(cost_LCR >1.5*WEIGHT_SAFETY)
                         {
                           flag_reduce_acc = true;
                         }
@@ -526,6 +538,7 @@ int main() {
 		}
 		
 		// KL or LCL or LCR
+                // i_cycle % 4 = 0 to avoid continuous lane change and high acceleration.
 		if(LCL && (i_cycle % 4 == 0))
 		{
 		  lane -=1;
@@ -534,11 +547,10 @@ int main() {
 		{
 		  lane +=1;
 		  std::cout << "lane change right: cost of LCL, KL, LCR:" << cost_LCL << "  "<< cost_KL << "  " << cost_LCR << std::endl;
-		}//else if(KL)
-		//{
-	  	  //flag_reduce_vel = true;
+		}else 
+		{
 		  //std::cout << "keep lane: cost of LCL, KL, LCR:" << cost_LCL << "  "<< cost_KL << "  " << cost_LCR << std::endl;
-		//}
+		}
 
 		// increase velocity or decrease velocity
 		if(flag_reduce_vel)
