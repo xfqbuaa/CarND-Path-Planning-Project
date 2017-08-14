@@ -21,8 +21,9 @@ int WEIGHT_EFFICIENCY = 1;
 int WEIGHT_SAFETY = 100;
 
 // mininum required safe distance between vehicles on highway
-int DIST_REF_FRONT = 30;
-int DIST_REF_REAR = 10;
+int DIST_REF_FRONT = 15;
+int DIST_REF_REAR = 5;
+int DIST_REF = 30;
 // prediction waypoints number
 int PATH_LENGTH = 50;
 // lane width
@@ -30,7 +31,7 @@ int LANE_WIDTH = 4;
 // target speed
 float TARGET_SPEED = 49.5; //mph
 // delta velocity
-float DELTA_VEL = 0.3; //m/s
+float DELTA_VEL = 0.33; //m/s
 
 
 // for convenience
@@ -189,7 +190,7 @@ float getMinGap(double s, int l, vector<vector<double>> sf, bool front)
   for(int i =0; i<sf.size(); i++)
   {
     float d = sf[i][6];
-    if(d < (LANE_WIDTH*(0.5+l+0.7)) && d > (LANE_WIDTH*(0.5+l-0.7)))
+    if(d < (LANE_WIDTH*(0.5+l+0.6)) && d > (LANE_WIDTH*(0.5+l-0.6)))
     {
       double vx = sf[i][3];
       double vy = sf[i][4];		    
@@ -226,12 +227,12 @@ float s_diff_Cost(float ds)
   if(ds <= DIST_REF_FRONT)
   {
     cost = 1;
-  }else if(ds > 3*DIST_REF_FRONT)
+  }else if(ds > 4*DIST_REF_FRONT)
   {
     cost = 0;
   }else
   {
-    cost = (3*DIST_REF_FRONT - ds)/(2*DIST_REF_FRONT);
+    cost = (4*DIST_REF_FRONT - ds)/(3*DIST_REF_FRONT);
   }
 
   return cost;
@@ -239,14 +240,10 @@ float s_diff_Cost(float ds)
 
 // safety cost
 // factor=100
-float collisionCost(float ds, bool front)
+float collisionCostFront(float ds)
 {
   float cost = 0;
-  int refd = DIST_REF_REAR;
-  if(front)
-  {
-    refd = DIST_REF_FRONT;
-  }
+  int refd = DIST_REF_FRONT;
 
   if(ds >= refd)
   {
@@ -254,12 +251,36 @@ float collisionCost(float ds, bool front)
   }else if(ds < 0.4*refd)
   {
     cost = 2;
-  }else if(ds <= refd*0.8 && ds >= 0.4*refd)
+  }else if(ds <= refd*0.7 && ds >= 0.4*refd)
   {
     cost = 1;
   }else
   {
-    cost = (refd-ds)/(0.2*refd);
+    cost = (refd-ds)/(0.3*refd);
+    //std::cout << "ds" << ds << "  " << cost <<std::endl;
+  }
+  return cost;
+}
+
+// safety cost
+// factor=100
+float collisionCostRear(float ds)
+{
+  float cost = 0;
+  int refd = DIST_REF_REAR;
+
+  if(ds >= refd)
+  {
+    cost = 0;
+  }else if(ds < 0.4*refd)
+  {
+    cost = 2;
+  }else if(ds <= refd*0.7 && ds >= 0.4*refd)
+  {
+    cost = 1;
+  }else
+  {
+    cost = (refd-ds)/(0.3*refd);
     //std::cout << "ds" << ds << "  " << cost <<std::endl;
   }
   return cost;
@@ -278,11 +299,11 @@ float calculateCost(double s, int l, vector<vector<double>> sf, bool change)
   float gap_rear = getMinGap(s, l, sf, false);
 
   cost += s_diff_Cost(gap_front)*WEIGHT_EFFICIENCY;
-  cost += collisionCost(gap_front, true)*WEIGHT_SAFETY; // front
+  cost += collisionCostFront(gap_front)*WEIGHT_SAFETY; // front
   
   if(change)
   {
-    cost += collisionCost(gap_rear, false)*WEIGHT_SAFETY; // rear
+    cost += collisionCostRear(gap_rear)*WEIGHT_SAFETY; // rear
   }
 
   return cost;
@@ -417,7 +438,7 @@ int main() {
 		for(int i =0; i<sensor_fusion.size(); i++)
 		{
 		  float d = sensor_fusion[i][6];
-		  if(d < (LANE_WIDTH*(0.5+lane+0.7)) && d > (LANE_WIDTH*(0.5+lane-0.7)))
+		  if(d < (LANE_WIDTH*(0.5+lane+0.6)) && d > (LANE_WIDTH*(0.5+lane-0.6)))
 		  {
 		    double vx = sensor_fusion[i][3];
     		    double vy = sensor_fusion[i][4];		    
@@ -426,7 +447,7 @@ int main() {
 
    		    check_car_s += ((double)prev_size*0.02*check_speed);
 
-		    if((check_car_s > car_s) &&((check_car_s-car_s) <= DIST_REF_FRONT))
+		    if((check_car_s > car_s) &&((check_car_s-car_s) <= DIST_REF))
 		    {
 		      // behavior_planner model to determine
 		      // LCL / LCR / KL
@@ -570,9 +591,9 @@ int main() {
           	}
 
 		
-		vector<double> next_wp0 = getXY(car_s+1*DIST_REF_FRONT, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
-		vector<double> next_wp1 = getXY(car_s+2*DIST_REF_FRONT, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
-		vector<double> next_wp2 = getXY(car_s+3*DIST_REF_FRONT, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+		vector<double> next_wp0 = getXY(car_s+1*DIST_REF, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+		vector<double> next_wp1 = getXY(car_s+2*DIST_REF, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+		vector<double> next_wp2 = getXY(car_s+3*DIST_REF, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
 
  		ptsx.push_back(next_wp0[0]);
 		ptsx.push_back(next_wp1[0]);
