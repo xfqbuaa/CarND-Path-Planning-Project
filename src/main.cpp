@@ -17,7 +17,7 @@ using namespace std;
 // high way lane id [0,1,2]; 
 // factors for cost functions
 int WEIGHT_EFFICIENCY = 1;
-int WEIGHT_SAFETY = 100;
+int WEIGHT_SAFETY = 100; 
 
 // factors for collison cost calculation front and rear
 float FACTOR_REF_FRONT = 1.0;
@@ -31,9 +31,10 @@ int PATH_LENGTH = 50;
 // lane width
 int LANE_WIDTH = 4;
 // target speed
-float TARGET_SPEED = 49.5; //mph
+float TARGET_SPEED = 49.5; // mph
 // delta velocity
-float DELTA_VEL = 0.33; //m/s
+float DELTA_VEL = 0.33; // m/s
+// detect vehicles with consideration of +/- LANE*LANE_MARGIN = +/-2.4m
 float LANE_MARGIN = 0.6; 
 
 
@@ -184,13 +185,14 @@ vector<double> getXY(double s, double d, vector<double> maps_s, vector<double> m
 	return {x,y};
 }
 
-// functions 
+// own functions 
 // calculate minimum relative distance to the cloest front/rear car
 // front: if calcuate the gap between front car, front is true. otherwise front is false.
 float getMinGap(double s, int l, vector<vector<double>> sf, bool front)
 {
   float minGap = 999;
   float minVel = 99;
+  // default minGap 999 and minVel 99 will lead to 0 cost if ther is a empty lane.
   for(int i =0; i<sf.size(); i++)
   {
     float d = sf[i][6];
@@ -220,11 +222,7 @@ float getMinGap(double s, int l, vector<vector<double>> sf, bool front)
       }
     }
   }
-  //if(minVel == 999)
-  //{
-    //minVel = 9;
-  //}
-  return minGap/(50*0.02*minVel);   //  realative to 1s check car displacement
+  return minGap/(50*0.02*minVel);   // realative to 1s check car displacement. return value is a relative value.
   //return minGap;
 }
 
@@ -253,6 +251,7 @@ float s_diff_Cost(float ds)
 
 // safety cost
 // factor=100
+// cost function return value close to 100 means collison possibility, while close 200 means the distance is too small and lead to sudden brake.
 float collisionCostFront(float ds)
 {
   float cost = 0;
@@ -333,11 +332,11 @@ int main() {
   vector<double> map_waypoints_dy;
 
   // Waypoint map to read from
-  //string map_file_ = "../data/highway_map.csv";
-  string map_file_ = "../data/highway_map_bosch1.csv";
+  string map_file_ = "../data/highway_map.csv";
+  //string map_file_ = "../data/highway_map_bosch1.csv";
   // The max s value before wrapping around the track back to 0
-  //double max_s = 6945.554;
-  double max_s = 5104.621;
+  double max_s = 6945.554;
+  //double max_s = 5104.621;
   ifstream in_map_(map_file_.c_str(), ifstream::in);
 
   string line;
