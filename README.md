@@ -1,6 +1,51 @@
 # CarND-Path-Planning-Project
 Self-Driving Car Engineer Nanodegree Program
 
+## Update Summary 2017.08.16
+
+Thanks a lot for feedback from Udacity reviewer.
+
+This is also a real problem in vehicle development. It is hard for you to make sure that there will be no problem for your customer even though you finish a lot of tests.
+
+According to feedback, these following modifications have been implemented and runs 5 times above 10km, no collisions, no exceed acceleration and jerk limit.
+![](./image/Udacity_update.png)
+
+1. Max. acceleration exceeds required limit 10m/s^2.
+
+The exceed of Max. acceleration limit always happens continuous lane changes with high vehicle speed.
+
+The increment of velocity `DELTA_VEL` reduced from origin 0.33m/s to 0.25m/s.
+
+```
+// delta velocity
+float DELTA_VEL = 0.25; // m/s
+```
+
+The interval of continuous lane change increased from every 4 cycles to 5 cycles.
+
+```
+if(LCL && (i_cycle % 6 == 0))
+```
+
+2. Collision with car
+
+The collision with car mainly caused by the inadequate distance to lane change. At first the gap between estimated ego car and check car has been used as cost functions input instead of relative to check car displacement in 1s since it is easy to control and understand.
+
+These two reference distance variables `DIST_REF_FRONT` and `DIST_REF_REAR` have been optimized as following:
+
+```
+int DIST_REF_FRONT = 18;
+int DIST_REF_REAR = 13;
+```
+
+3. New trigger to cost calculate
+
+Except the trigger system that monitoring the minimum distance to the closest front car, which carried over from walkthrough, a new trigger system has been considered with every `N_DETECT` cycles. In this case, the car can choose empty lane even there are no close car in front.
+```
+// consider more trigger i_cycle % N_DETECT == 0 to make car look more far and smart
+if(((check_car_s > car_s) && ((check_car_s-car_s) <= DIST_REF)) || i_cycle % N_DETECT == 0)
+```
+
 ## Summary
 
 The codes meet requirements of path planning projects rubrics.

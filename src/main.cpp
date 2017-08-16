@@ -19,13 +19,10 @@ using namespace std;
 int WEIGHT_EFFICIENCY = 1;
 int WEIGHT_SAFETY = 100; 
 
-// factors for collison cost calculation front and rear
-float FACTOR_REF_FRONT = 1.0;
-float FACTOR_REF_REAR = 0.6;
 // mininum required safe distance between vehicles on highway
 int DIST_REF = 30;
-int DIST_REF_FRONT = 15;
-int DIST_REF_REAR = 10;
+int DIST_REF_FRONT = 18;
+int DIST_REF_REAR = 13;	
 // prediction waypoints number
 int PATH_LENGTH = 50;
 // lane width
@@ -33,9 +30,11 @@ int LANE_WIDTH = 4;
 // target speed
 float TARGET_SPEED = 49.5; // mph
 // delta velocity
-float DELTA_VEL = 0.33; // m/s
+float DELTA_VEL = 0.25; // m/s
 // detect vehicles with consideration of +/- LANE*LANE_MARGIN = +/-2.4m
-float LANE_MARGIN = 0.6; 
+float LANE_MARGIN = 0.7; 
+// every n_detect cycles to detect traffic conditions
+int N_DETECT = 10;
 
 
 // for convenience
@@ -222,8 +221,7 @@ float getMinGap(double s, int l, vector<vector<double>> sf, bool front)
       }
     }
   }
-  return minGap/(50*0.02*minVel);   // realative to 1s check car displacement. return value is a relative value.
-  //return minGap;
+  return minGap;
 }
 
 // efficient cost 
@@ -232,8 +230,7 @@ float s_diff_Cost(float ds)
 {
   
   float cost =0;
-  //float refd = DIST_REF_FRONT;
-  float refd = FACTOR_REF_FRONT;
+  float refd = DIST_REF_FRONT;
 
   if(ds <= 1*refd) 
   {
@@ -255,8 +252,7 @@ float s_diff_Cost(float ds)
 float collisionCostFront(float ds)
 {
   float cost = 0;
-  //float refd = DIST_REF_FRONT;
-  float refd = FACTOR_REF_FRONT;
+  float refd = DIST_REF_FRONT;
 
   if(ds >= refd)
   {
@@ -280,8 +276,7 @@ float collisionCostFront(float ds)
 float collisionCostRear(float ds)
 {
   float cost = 0;
-  //float refd = DIST_REF_REAR;
-  float refd = FACTOR_REF_REAR;
+  float refd = DIST_REF_REAR;
 
   if(ds >= refd)
   {
@@ -364,7 +359,7 @@ int main() {
   // vehicle initial speed
   double vel = 0; //mph
   // int cycle number
-  int i_cycle = 0;
+  int i_cycle = 1;
 
   h.onMessage([&vel,&lane,&i_cycle,&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
@@ -445,6 +440,7 @@ int main() {
 		bool flag_increase_acc = false;
                 bool flag_reduce_acc = false;
 
+		
 		// detect front car  
 		for(int i =0; i<sensor_fusion.size(); i++)
 		{
@@ -457,8 +453,8 @@ int main() {
 		    double check_car_s = sensor_fusion[i][5];
 
    		    check_car_s += ((double)prev_size*0.02*check_speed);
-
-		    if((check_car_s > car_s) &&((check_car_s-car_s) <= DIST_REF))
+	            // consider more trigger i_cycle % N_DETECT == 0 to make car look more far and smart
+		    if(((check_car_s > car_s) && ((check_car_s-car_s) <= DIST_REF)) || i_cycle % N_DETECT == 0)
 		    {
 		      // behavior_planner model to determine
 		      // LCL / LCR / KL
@@ -484,12 +480,12 @@ int main() {
 		        cost_LCR = 999;
 		      }
 		      
-		      if(cost_LCLL < cost_LCL && cost_LCL < .3*WEIGHT_SAFETY)
+		      if(cost_LCLL < cost_LCL && cost_LCL < .1*WEIGHT_SAFETY)
   		      {
  			cost_LCL = cost_LCLL;
                       }
 
-	 	      if(cost_LCRR < cost_LCR && cost_LCR < .3*WEIGHT_SAFETY)
+	 	      if(cost_LCRR < cost_LCR && cost_LCR < .1*WEIGHT_SAFETY)
   		      {
  			cost_LCR = cost_LCRR;
                       }
@@ -501,33 +497,33 @@ int main() {
 			LCL = false;
 			LCR = false;
 			flag_reduce_vel = true;
-                        if(cost_KL >1.5*WEIGHT_SAFETY)
+                        if(cost_KL >1.1*WEIGHT_SAFETY)
                         {
                           flag_reduce_acc = true;
                         }
-		      }else if(cost_LCL <= cost_KL && cost_LCL <= cost_LCR && cost_LCL < WEIGHT_SAFETY) 
+		      }else if(cost_LCL <= cost_KL && cost_LCL <= cost_LCR && cost_LCL < .1*WEIGHT_SAFETY) 
 		      {
 		        KL = false;
   			LCL  = true;
 			LCR  = false;
-                        if(vel < TARGET_SPEED*0.8)
+                        if(vel < TARGET_SPEED*0.5)
   	 		{
 			  flag_increase_acc = true;
 			}
-			if(cost_LCL >1.5*WEIGHT_SAFETY)
+			if(cost_LCL >1.1*WEIGHT_SAFETY)
                         {
                           flag_reduce_acc = true;
                         }
- 		      }else if(cost_LCR <= cost_KL && cost_LCR <= cost_LCL && cost_LCR < WEIGHT_SAFETY)
+ 		      }else if(cost_LCR <= cost_KL && cost_LCR <= cost_LCL && cost_LCR < .1*WEIGHT_SAFETY)
 		      {
 			KL = false;
   			LCL  = false;
 		        LCR = true;
-			if(vel < TARGET_SPEED*0.8)
+			if(vel < TARGET_SPEED*0.5)
   	 		{
 			  flag_increase_acc = true;
 			}
-                        if(cost_LCR >1.5*WEIGHT_SAFETY)
+                        if(cost_LCR >1.1*WEIGHT_SAFETY)
                         {
                           flag_reduce_acc = true;
                         }
@@ -535,14 +531,15 @@ int main() {
 		    }
 		  }
 		}
+
 		
 		// KL or LCL or LCR
                 // i_cycle % 4 = 0 to avoid continuous lane change and high acceleration.
-		if(LCL && (i_cycle % 4 == 0))
+		if(LCL && (i_cycle % 6 == 0))
 		{
 		  lane -=1;
 		  std::cout << "lane change left: cost of LCL, KL, LCR:" << cost_LCL << "  "<< cost_KL << "  " << cost_LCR << std::endl;
-		}else if(LCR && (i_cycle % 4 == 0))
+		}else if(LCR && (i_cycle % 6 == 0))
 		{
 		  lane +=1;
 		  std::cout << "lane change right: cost of LCL, KL, LCR:" << cost_LCL << "  "<< cost_KL << "  " << cost_LCR << std::endl;
@@ -564,11 +561,11 @@ int main() {
 		// increase a or decrease a
 		if(flag_increase_acc or vel < 0.5*TARGET_SPEED)
                 {
-                  vel += DELTA_VEL;
+                  vel += DELTA_VEL*1;
                 }		
 		if(flag_reduce_acc)
                 {
-                  vel -= DELTA_VEL*2;
+                  vel -= DELTA_VEL*1;
                 }
                 i_cycle += 1;
                 
