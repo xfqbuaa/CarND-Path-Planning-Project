@@ -223,7 +223,7 @@ This is not a easy project.
 
 At first I have not any idea to combine what we learn in class and the project. Thanks for the walkthrough video a lot.
 
-The first step is to control the car with a simple codes, which principle is same to what the people drive on the highway. It works well but there are a lot of special situation the code can do deal with and not easy to improve.
+The first step is to control the car with a simple codes, which principle is same to what the people drive on the highway. It works well but there are a lot of special situation the code can not deal with and not easy to improve.
 
 Then I modified the codes to cost function structure and test it, tuning it and improve it one by one.
 
